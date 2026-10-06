@@ -1,0 +1,16 @@
+name: Commit messages
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # With no commitlint config in the repo, this falls back to
+      # @commitlint/config-conventional: Conventional Commits.
+      - uses: wagoid/commitlint-github-action@v6
