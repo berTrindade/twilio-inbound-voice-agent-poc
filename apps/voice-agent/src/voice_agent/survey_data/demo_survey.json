@@ -1,0 +1,62 @@
+[
+  {
+    "id": "WELCOME_V1",
+    "source": "onboarding",
+    "type": "interstitial",
+    "text": "Welcome to the voice agent demo. I'm an AI assistant and I'll ask you a few short questions. This should only take a minute. Let's get started.",
+    "interruptible": false,
+    "preemptible": false,
+    "next_id": "Q_NAME_V1"
+  },
+  {
+    "id": "Q_NAME_V1",
+    "source": "questions",
+    "type": "free_text",
+    "text": "First, what's your first name?",
+    "validation": [
+      { "kind": "minlength", "min": 2 }
+    ],
+    "next_id": "Q_USED_BEFORE_V1"
+  },
+  {
+    "id": "Q_USED_BEFORE_V1",
+    "source": "questions",
+    "type": "single_choice",
+    "text": "Have you used a voice assistant before?",
+    "speak_options": true,
+    "options": [
+      { "value": "yes", "label": "Yes" },
+      { "value": "no", "label": "No" }
+    ],
+    "next_id": "Q_SATISFACTION_V1"
+  },
+  {
+    "id": "Q_SATISFACTION_V1",
+    "source": "questions",
+    "type": "single_choice",
+    "text": "How would you rate your experience with this demo so far?",
+    "speak_options": true,
+    "options": [
+      { "value": "great", "label": "Great" },
+      { "value": "okay", "label": "Okay" },
+      { "value": "poor", "label": "Poor" }
+    ],
+    "next_id": "Q_COMMENTS_V1"
+  },
+  {
+    "id": "Q_COMMENTS_V1",
+    "source": "questions",
+    "type": "free_text",
+    "text": "Is there anything you'd like to tell us? You can say a sentence or two, or just say no.",
+    "next_id": "CLOSING_V1"
+  },
+  {
+    "id": "CLOSING_V1",
+    "source": "closing",
+    "type": "interstitial",
+    "text": "That's everything. Thanks for trying the voice agent demo. Goodbye.",
+    "interruptible": false,
+    "preemptible": false,
+    "next_id": null
+  }
+]

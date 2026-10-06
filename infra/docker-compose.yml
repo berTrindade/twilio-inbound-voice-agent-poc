@@ -1,0 +1,163 @@
+# Twilio inbound voice agent - free self-hosted stack
+#   Postgres + voice-agent + dashboard. The models run in Docker Model Runner,
+#   not a container, so they reach the GPU. See the Makefile.
+# Build context for the runner and dashboard is the monorepo root (..).
+#
+# First run:
+#   docker compose -f infra/docker-compose.yml up -d --build
+#   docker model pull ai/qwen2.5:7B-Q4_K_M
+#   docker model pull ai/llama3.1:8B-Q4_K_M
+# Then open http://localhost:3000/chat
+# Observability: Grafana at http://localhost:3001 (anonymous admin), with Tempo
+# (traces), Prometheus (metrics) and Loki (logs) fed by the OTel Collector.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: survey_user
+      POSTGRES_PASSWORD: survey_pass
+      POSTGRES_DB: survey_db
+    # Deliberately not published: 5432 is the port most likely to be taken on a
+    # developer's machine, and nothing outside the compose network needs it.
+    # To inspect the data: docker compose -f infra/docker-compose.yml exec postgres
+    #   psql -U survey_user survey_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U survey_user -d survey_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  voice-agent:
+    build:
+      context: ..
+      dockerfile: apps/voice-agent/Dockerfile
+    command: >
+      sh -c "python -m alembic upgrade head &&
+             python -m uvicorn voice_agent.main:app --host 0.0.0.0 --port 8080"
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql://survey_user:survey_pass@postgres:5432/survey_db
+      # Docker Model Runner runs the model outside the VM on a Mac, so it
+      # reaches the GPU. Its Ollama-native API honours `format: json`, which the
+      # interpreter depends on; its OpenAI-compatible /v1 ignores response_format,
+      # so point at the native root, not the URL a Compose `models:` block injects.
+      # The cost of that choice: its /api/chat omits prompt_eval_count and
+      # eval_count, so gen_ai.usage.* traces read zero. Real Ollama returns them.
+      # Override both of these to use your own Ollama instead. See .env.example.
+      OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://model-runner.docker.internal}"
+      OLLAMA_TIMEOUT_SECONDS: "120"
+      LOG_STYLE: text
+      # Overridable from the root .env. Defaults run everything locally and free.
+      LLM_PROVIDER: "${LLM_PROVIDER:-ollama}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      SMALL_MODEL_ID: "${SMALL_MODEL_ID:-ai/qwen2.5:7B-Q4_K_M}"
+      BIG_MODEL_ID: "${BIG_MODEL_ID:-ai/llama3.1:8B-Q4_K_M}"
+      TWILIO_WS_DOMAIN: "${TWILIO_WS_DOMAIN:-}"
+      TWILIO_AUTH_TOKEN: "${TWILIO_AUTH_TOKEN:-}"
+      TWILIO_RECORDING_ENABLED: "${TWILIO_RECORDING_ENABLED:-false}"
+      # Off by default: with it on and no number set, a handover hangs up the caller.
+      COACH_HANDOFF_ENABLED: "${COACH_HANDOFF_ENABLED:-false}"
+      COACH_PHONE_NUMBER: "${COACH_PHONE_NUMBER:-}"
+      OTEL_SERVICE_NAME: voice-agent
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
+      # Default is 60s, which is longer than a demo call: every metric would
+      # arrive in one push and rate() would see a series that never rose.
+      OTEL_METRIC_EXPORT_INTERVAL: "5000"
+    ports:
+      - "${RUNNER_PORT:-8080}:8080"
+    # Only needed if you repoint OLLAMA_BASE_URL at an Ollama on the host:
+    # Docker Desktop resolves this name already, Linux needs the mapping.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  dashboard:
+    build:
+      context: ../apps/dashboard
+      dockerfile: Dockerfile
+      args:
+        # The browser reaches the runner on the host, not over this network, and
+        # Next inlines NEXT_PUBLIC_* at build time. Passing it as a build arg is
+        # what makes changing RUNNER_PORT actually reach the chat page; the host
+        # itself is derived from window.location at runtime. See app/chat/WsConfig.ts.
+        NEXT_PUBLIC_RUNNER_PORT: "${RUNNER_PORT:-8080}"
+    environment:
+      DATABASE_URL: postgresql://survey_user:survey_pass@postgres:5432/survey_db
+      # Local Postgres does not speak TLS, and the client defaults to requiring it.
+      DATABASE_SSL: disable
+      SHOW_CHAT: "true"
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---- Observability (Datadog-free) ----
+  otel-collector:
+    profiles: ["observability"]
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otel-collector.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    depends_on:
+      - tempo
+      - loki
+      - prometheus
+
+  tempo:
+    profiles: ["observability"]
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v2.55.1
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+
+  loki:
+    profiles: ["observability"]
+    image: grafana/loki:3.2.1
+    command: ["-config.file=/etc/loki/loki-config.yaml"]
+    volumes:
+      - ./observability/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki_data:/loki
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:11.3.1
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+      - tempo
+      - loki
+
+volumes:
+  postgres_data:
+  tempo_data:
+  prometheus_data:
+  loki_data:
+  grafana_data:

@@ -1,0 +1,11 @@
+apiVersion: 1
+
+# Dashboard JSON lives beside this file; Grafana reads *.json here as dashboards
+# and *.yaml as providers, so no extra mount is needed.
+providers:
+  - name: voice-agent
+    folder: ""
+    type: file
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

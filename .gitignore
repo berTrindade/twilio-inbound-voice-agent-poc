@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+!env.example
+
+# OS / editor
+.DS_Store
+
+# Local data / artifacts
+localstack-data/
+playwright-report/
+test-results/
+*.log
+
+
+# Local compose override (machine-specific)
+infra/docker-compose.local.yml
+

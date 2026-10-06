@@ -1,0 +1,52 @@
+# Runs what can run without a model: the call runner's suite and the dashboard
+# build. `make eval` needs a live model runtime, so it stays a local command.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  voice-agent:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/voice-agent
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: pipx install poetry
+      - run: poetry install --no-interaction
+      # Unused imports, redefinitions and unused locals, so dead Python cannot
+      # quietly regrow. Same job knip does for the dashboard below. alembic and
+      # scripts are in scope deliberately: migrations import from src, so a
+      # symbol that looks unused there is still load-bearing here.
+      - run: poetry run ruff check src tests alembic scripts
+      - run: poetry run black --check src tests alembic scripts
+      - run: poetry run pytest -q
+
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/dashboard
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      # Fails on unused files, exports and dependencies, so the codebase cannot
+      # quietly regrow the dead weight this config was added to remove.
+      - run: npm run knip
+      # Type errors surface here: next build type-checks the whole app. Nothing
+      # connects at build time, the URL only has to parse.
+      - run: npm run build
+        env:
+          DATABASE_URL: postgresql://dummy:dummy@localhost:5432/dummy

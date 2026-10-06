@@ -1,0 +1,86 @@
+# Render Blueprint — always-on, sharable demo (runner + dashboard).
+# Apply via Render -> New -> Blueprint, pointed at this repo. Fill the sync:false
+# secrets when prompted. Full runbook: docs/hosting.md.
+#
+# LLM is Groq (OpenAI-compatible, no GPU) so the runner fits a small instance.
+# Postgres is external (Neon) — paste its URL into the DATABASE_URL secret.
+
+envVarGroups:
+  - name: voice-agent-shared
+    envVars:
+      - key: DATABASE_URL # Neon connection string (postgresql://...)
+        sync: false
+
+services:
+  # --- Voice runner: always-on so Twilio's WebSocket never cold-starts ---
+  - type: web
+    name: voice-agent
+    runtime: docker
+    repo: https://github.com/berTrindade/twilio-inbound-voice-agent-poc
+    branch: main
+    dockerfilePath: ./apps/voice-agent/Dockerfile
+    dockerContext: .
+    plan: starter # ~$7/mo, always-on; a free cold-start can drop the Twilio call
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: voice-agent-shared
+      - key: ENVIRONMENT
+        value: production
+      - key: LLM_PROVIDER
+        value: groq
+      - key: LLM_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: LLM_API_KEY # Groq API key (console.groq.com)
+        sync: false
+      - key: SMALL_MODEL_ID
+        value: llama-3.1-8b-instant
+      - key: BIG_MODEL_ID
+        value: llama-3.3-70b-versatile
+      - key: LOG_STYLE
+        value: json
+      # Public host Twilio reaches; auto-filled with this service's own hostname.
+      - key: TWILIO_WS_DOMAIN
+        fromService:
+          type: web
+          name: voice-agent
+          property: host
+      - key: TWILIO_AUTH_TOKEN # from Twilio console (webhook signature validation)
+        sync: false
+      # --- survey content and voice ---
+      - key: SURVEY_JSON_PATH
+        value: demo_survey.json
+      - key: INITIAL_NODE_ID
+        value: WELCOME_V1
+      - key: VOICE
+        value: XrExE9yKIg1WjnnlVkGX
+      - key: LANGUAGE
+        value: en-US
+      - key: TTS_PROVIDER
+        value: ElevenLabs
+
+  # --- Dashboard: free tier is fine (no inbound WebSockets needed) ---
+  - type: web
+    name: voice-agent-dashboard
+    runtime: docker
+    repo: https://github.com/berTrindade/twilio-inbound-voice-agent-poc
+    branch: main
+    dockerfilePath: ./apps/dashboard/Dockerfile
+    dockerContext: ./apps/dashboard
+    plan: free
+    envVars:
+      - fromGroup: voice-agent-shared
+      - key: SHOW_CHAT
+        value: "true"
+      # --- branding ---
+      - key: APP_NAME
+        value: Voice agent
+      - key: BRAND_COLOR
+        value: "#1b6df1"
+      - key: BRAND_COLOR_DARK
+        value: "#1a6ad0"
+      - key: FAVICON_PATH
+        value: /ico.png
+      # Browser -> runner WebSocket. Fill once the runner URL is known:
+      #   wss://voice-agent.onrender.com/ws
+      - key: NEXT_PUBLIC_WS_URL
+        sync: false
